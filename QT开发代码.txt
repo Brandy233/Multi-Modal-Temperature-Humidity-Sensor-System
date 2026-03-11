@@ -1,0 +1,395 @@
+sql.h{
+#ifndef SQL_H
+#define SQL_H
+
+#include <QSqlDatabase>
+#include <QSqlTableModel>
+#include <QWidget>
+
+namespace Ui {
+class sql;
+}
+
+class sql : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit sql(QWidget *parent = nullptr);
+    ~sql();
+
+private slots:
+    void show_sql();
+
+    void on_pushButton_Back_clicked();
+
+    void table_show(QSqlDatabase db);
+
+
+
+    void on_pushButton_ShowSQL_clicked();
+
+    void on_pushButton_AddData_clicked();
+
+    void on_pushButton_Delete_clicked();
+
+    bool insertDataIntoDatabase(double temperature, double humidity);
+
+    void addSensorData(double temperature, double humidity);
+
+signals:
+    void back_meau();
+
+
+
+private:
+    Ui::sql *ui;
+
+    QSqlTableModel *model;
+
+    QSqlDatabase db;
+
+};
+
+#endif // SQL_H
+}
+
+sql.cpp{
+#include "sql.h"
+#include "ui_sql.h"
+#include "widget.h"
+
+#include <QMessageBox>
+#include <QSqlDatabase>
+#include <QDebug>
+#include <QSqlError>
+#include <QSqlQuery>
+#include <QSqlRecord>
+#include <QModelIndexList>
+#include <QSqlRecord>
+#include <QStandardPaths>
+
+sql::sql(QWidget *parent) :
+    QWidget(parent),
+    ui(new Ui::sql)
+{
+    ui->setupUi(this);
+    this->setLayout(ui->verticalLayout_3);
+     db = QSqlDatabase::addDatabase("QSQLITE");
+      //QString dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/HumidityData.db";
+       QString dbPath = "HumidityData.db";
+      db.setDatabaseName(dbPath);
+
+          bool ok = db.open();
+          if(ok){
+              QMessageBox::information(this,"数据库连接", "SQLite数据库连接成功！文件位于: " + dbPath);
+
+              QSqlQuery query(db); // 指定数据库连接
+
+              // 建表SQL语句（SQLite版本）
+              QString createTableSQL = "CREATE TABLE IF NOT EXISTS HumidityData ("
+                                       "id INTEGER PRIMARY KEY AUTOINCREMENT," // SQLite的自增主键
+                                       "temperature REAL NOT NULL,"           // 使用 REAL 存储浮点数
+                                       "humidity REAL NOT NULL,"              // 使用 REAL 存储浮点数
+                                       "timestamp DATETIME DEFAULT CURRENT_TIMESTAMP" // 增加时间戳字段
+                                       ")";
+
+              // 执行建表语句，确保表存在
+              if (!query.exec(createTableSQL)) {
+                  QMessageBox::critical(this, "数据库错误", "创建表失败: " + query.lastError().text());
+                  qDebug() << "创建表失败:" << query.lastError().text();
+              } else {
+                  qDebug() << "表 'HumidityData' 已存在或创建成功。";
+              }
+          }else{
+              QMessageBox::critical(this , "数据库连接" , "SQLite数据库连接失败: " + db.lastError().text());
+              qDebug() << "SQLite数据库连接失败:" << db.lastError().text();
+          }
+          // 初始化 QSqlTableModel 并设置到 tableView
+              model = new QSqlTableModel(this, db);
+              model->setTable("HumidityData");
+              model->setHeaderData(0, Qt::Horizontal, "数据ID");
+              model->setHeaderData(1, Qt::Horizontal, "温度(℃)");
+              model->setHeaderData(2, Qt::Horizontal, "湿度(%)");
+              model->setHeaderData(3, Qt::Horizontal, "时间");
+              model->select(); // 首次加载数据
+              ui->tableView_SQL->setModel(model);
+
+}
+
+
+sql::~sql()
+{
+    delete ui;
+}
+
+void sql::show_sql()
+{
+    this->show();
+
+}
+
+void sql::on_pushButton_Back_clicked()
+{
+    emit back_meau();
+    this->hide();
+
+}
+
+void sql::table_show(QSqlDatabase db)
+{  // 这个函数现在可以简化，因为 model 已经在构造函数中初始化
+    // 它的主要作用现在是刷新数据
+    if (model) {
+        model->select();
+    }
+}
+
+
+
+
+
+
+
+
+void sql::on_pushButton_ShowSQL_clicked()
+{
+    table_show( db);
+}
+
+
+// 私有辅助函数，处理数据插入的通用逻辑
+bool sql::insertDataIntoDatabase(double temperature, double humidity)
+{
+    if (!db.isOpen()) {
+        QMessageBox::critical(this, "错误", "数据库未连接！");
+        return false;
+    }
+    if (!model) {
+        QMessageBox::critical(this, "错误", "模型未初始化！");
+        return false;
+    }
+
+    // 创建一条空记录
+    QSqlRecord record = model->record();
+    // 设置字段值
+    record.setValue("temperature", temperature);
+    record.setValue("humidity", humidity);
+    // timestamp 字段设置为 DEFAULT CURRENT_TIMESTAMP，数据库会自动填充
+
+    // 插入到模型（-1 表示插入到末尾）
+    if (model->insertRecord(-1, record)) {
+        // 提交到数据库
+        if (model->submitAll()) {
+            model->select(); // 刷新表格显示
+            return true;
+        } else {
+            qDebug() << "提交失败：" << model->lastError().text();
+            model->revertAll(); // 回滚，避免模型数据和数据库不一致
+            return false;
+        }
+    } else {
+        qDebug() << "插入记录失败：" << model->lastError().text();
+        return false;
+    }
+}
+
+// 公共槽函数，用于接收传感器数据并存入数据库
+void sql::addSensorData(double temperature, double humidity)
+{
+    if (insertDataIntoDatabase(temperature, humidity)) {
+        qDebug() << "传感器数据自动添加成功: 温度=" << temperature << ", 湿度=" << humidity;
+    } else {
+        qDebug() << "传感器数据自动添加失败: 温度=" << temperature << ", 湿度=" << humidity;
+    }
+}
+
+void sql::on_pushButton_AddData_clicked()
+{
+    // 1. 获取用户输入
+     QString tempStr = ui->lineEdit_Temp->text().trimmed();   // 温度
+     QString humiStr = ui->lineEdit_chill->text().trimmed(); // 湿度
+
+     // 2. 简单校验：不能为空
+     if (tempStr.isEmpty() || humiStr.isEmpty()) {
+         QMessageBox::warning(this, "警告", "温度或湿度不能为空！");
+         return;
+     }
+
+     double temperature = tempStr.toDouble();
+     double humidity = humiStr.toDouble();
+
+     // 调用通用插入函数
+     if (insertDataIntoDatabase(temperature, humidity)) {
+         QMessageBox::information(this, "成功", "手动数据添加成功！");
+         // 清空输入框
+         ui->lineEdit_Temp->clear();
+         ui->lineEdit_chill->clear();
+     } else {
+         QMessageBox::critical(this, "错误", "手动数据添加失败！请查看日志。");
+     }
+
+
+}
+
+
+
+
+void sql::on_pushButton_Delete_clicked()
+{
+
+    // 1. 获取表格选中的行
+        QModelIndexList selectedRows = ui->tableView_SQL->selectionModel()->selectedRows();
+        if (selectedRows.isEmpty()) {
+            QMessageBox::warning(this, "提示", "请先选中要删除的行！");
+            return;
+        }
+
+        // 2. 弹出确认框（避免误删）
+        if (QMessageBox::question(this, "确认删除",
+            "是否删除选中的 " + QString::number(selectedRows.size()) + " 条数据？",
+            QMessageBox::Yes | QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+
+        // 3. 从模型中删除行（注意：要按行号从大到小删，避免索引混乱）
+        //    倒序删除：防止删除一行后，后面行的索引变化
+        for (int i = selectedRows.size() - 1; i >= 0; --i) {
+            int row = selectedRows.at(i).row();
+            model->removeRow(row);
+        }
+
+        // 4. 提交删除到数据库
+        if (model->submitAll()) {
+            QMessageBox::information(this, "成功", "数据删除成功！");
+            model->select(); // 刷新表格
+        } else {
+            QMessageBox::critical(this, "错误", "删除失败：" + model->lastError().text());
+            model->revertAll(); // 回滚，恢复模型数
+        }
+}
+
+}
+
+widget.h{
+
+#ifndef WIDGET_H
+#define WIDGET_H
+
+#include <QTcpSocket>
+#include <QWidget>
+
+QT_BEGIN_NAMESPACE
+namespace Ui { class Widget; }
+QT_END_NAMESPACE
+
+class Widget : public QWidget
+{
+    Q_OBJECT
+
+public:
+    Widget(QWidget *parent = nullptr);
+    ~Widget();
+
+private slots:
+    void on_pushButton_Connect_clicked();
+
+    void on_mread_Data();
+
+    void on_connected();
+
+    void on_Error(QAbstractSocket::SocketError);
+
+    void on_pushButton_stop_clicked();
+
+    void on_pushButton_SQL_clicked();
+
+    void return_meau();
+
+signals:
+    void emit_show();
+
+private:
+    Ui::Widget *ui;
+    QTcpSocket *client;
+};
+#endif // WIDGET_H
+}
+
+
+widget.cpp{
+#include "widget.h"
+#include "ui_widget.h"
+
+#include <QTcpSocket>
+
+Widget::Widget(QWidget *parent)
+    : QWidget(parent)
+    , ui(new Ui::Widget)
+{
+    ui->setupUi(this);
+    this->setLayout(ui->verticalLayout_2);
+    client = new QTcpSocket (this);
+    connect(client , SIGNAL(readyRead()), this , SLOT(on_mread_Data()));
+    ui->pushButton_stop->setEnabled(false);
+}
+
+Widget::~Widget()
+{
+    delete ui;
+}
+
+
+void Widget::on_pushButton_Connect_clicked()
+{
+    //    virtual void
+    //    connectToHost(const QHostAddress &address, quint16 port, QIODevice::OpenMode openMode = ReadWrite)
+    client->connectToHost(ui->lineEdit_IP->text() ,ui->lineEdit_port->text().toInt());
+    connect(client , SIGNAL(connected()) , this , SLOT(on_connected()));
+    connect(client , SIGNAL(error(QAbstractSocket::SocketError)) , this ,SLOT(on_Error(QAbstractSocket::SocketError)));
+}
+
+void Widget::on_connected()
+{
+
+        ui->textEdit_Rec->append("连接成功");
+        ui->pushButton_Connect->setEnabled(false);
+        ui->lineEdit_IP->setEnabled(false);
+        ui->lineEdit_port->setEnabled(false);
+        ui->pushButton_stop->setEnabled(true);
+
+}
+
+void Widget::on_Error(QAbstractSocket::SocketError error){
+    qDebug() << "连接错误"  << error;
+}
+
+void Widget::on_mread_Data(){
+    QString line = QString::fromUtf8( client->readAll());
+        QStringList list = line.split("/");
+        ui->textEdit_Rec->append("温湿度：" + list[0] + "℃" + "/" + list[1] + "%");
+        ui->textEdit_Rec->moveCursor(QTextCursor::End);
+        ui->textEdit_Rec->ensureCursorVisible();
+}
+
+void Widget::on_pushButton_stop_clicked()
+{
+    client->close();
+    ui->textEdit_Rec->append("成功断开");
+    ui->pushButton_Connect->setEnabled(true);
+    ui->lineEdit_IP->setEnabled(true);
+    ui->lineEdit_port->setEnabled(true);
+    ui->pushButton_stop->setEnabled(false);
+
+}
+
+void Widget::on_pushButton_SQL_clicked()
+{
+    emit emit_show();
+    this->hide();
+}
+
+void Widget::return_meau()
+{
+    this->show();
+}
+}
